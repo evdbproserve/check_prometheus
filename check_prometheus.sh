@@ -22,7 +22,7 @@ echo " "
 echo "Option		Meaning"
 echo "-c		Check host before executing check"
 echo " "
-exit $STATE_DEPENDENT
+exit 4
 
 }
 
@@ -33,31 +33,51 @@ requirements=( curl nc )
 
 for check in "${requirements[@]}"
 do
-	[ $(which $check) ] || ( echo "Please install $check."; exit $STATE_DEPENDENT )
+	[ $(which $check) ] && continue
+	echo "$check is required to run this check. Please install $check."
+	exit 4
 done
+
+
+# Check if http:// or https:// is defined in hostname/IP
+[[ "$HOSTNAME" != "https://"* ]] && [[ "$HOSTNAME" != "http://"* ]] && echo "Please use https://$HOSTNAME or http://$HOSTNAME" && exit 2
+
 
 }
 
 check_host() {
 
-nc -zv -4 -w 1 $HOSTNAME $PORT > /dev/null 2>&1
-[ $? -gt 0 ] && ( echo "CRITICAL - Prometheus unavailable on $HOSTNAME using port $PORT"; exit $STATE_CRITICAL )
+nc -zv -4 -w 1 ${HOSTNAME#*//} $PORT > /dev/null 2>&1
+[ $? -gt 0 ] || return
+
+echo "CRITICAL - Prometheus DOWN on $HOSTNAME using port $PORT"
+exit 2
 
 
 }
 
 
-check_health() {
+check_ready() {
 
 # Ready check
 result=$(curl -k --connect-timeout 2 $HOSTNAME:$PORT/-/ready 2>/dev/null)
-[ $? -gt 0 ] && ( echo "CRITICAL - Prometheus unavailable on $HOSTNAME using port $PORT"; exit $STATE_CRITICAL )
-[[ $result == *"Ready"* ]] || ( echo "CRITICAL - Prometheus is NOT ready on $HOSTNAME using port $PORT"; exit $STATE_CRITICAL )
+[[ $result == *"Ready"* ]] && return
+
+echo "CRITICAL - Prometheus is NOT ready on $HOSTNAME using port $PORT"
+exit 2
+
+
+
+}
+
+check_health() {
 
 # Health check
 result=$(curl -k --connect-timeout 2 $HOSTNAME:$PORT/-/healthy 2>/dev/null)
-[ $? -gt 0 ] && ( echo "CRITICAL - Prometheus unavailable on $HOSTNAME using port $PORT"; exit $STATE_CRITICAL )
-[[ $result == *"Healthy"* ]] || ( echo "CRITICAL - Prometheus is NOT healthy on $HOSTNAME using port $PORT"; exit $STATE_CRITICAL )
+[[ $result == *"Healthy"* ]] && return
+
+echo "CRITICAL - Prometheus is NOT healthy on $HOSTNAME using port $PORT"
+exit 2
 
 
 }
@@ -92,6 +112,7 @@ check_req
 [ $CHECK ] && check_host
 
 # Run the healty check(s)
+check_ready
 check_health
 
 # If you are here, all checks are good and we can leave it a good feeling.
